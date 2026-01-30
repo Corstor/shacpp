@@ -1,6 +1,8 @@
 EPISODES=20000
 COMPILE=True
 LOGGRAD=False
+TRAIN_ENVS=512
+EVAL_ENVS=512
 
 venv/bin/python3:
 	python3 -m venv venv
@@ -13,7 +15,7 @@ data/$1/$2/$3/mlp/$4/done: venv/bin/python3
 		modelcfg --model policy --nn mlp --hidden-size $(shell echo $$((32 * $(3)))) \
 		modelcfg --model value  --nn mlp --hidden-size $(shell echo $$((32 * $(3)))) \
 		modelcfg --model reward --nn mlp --hidden-size $(shell echo $$((32 * $(3)))) \
-		run --log-grads $(LOGGRAD) --alg-name $1 --env-name $2 --agents $3 --seed $4 --compile $(COMPILE) --episodes $(EPISODES)
+		run --log-grads $(LOGGRAD) --alg-name $1 --env-name $2 --agents $3 --seed $4 --compile $(COMPILE) --episodes $(EPISODES) --train-envs $(TRAIN_ENVS) --eval-envs $(EVAL_ENVS)
 
 data/$1/$2/$3/transformer/$4/done: venv/bin/python3
 	CUBLAS_WORKSPACE_CONFIG=":4096:8" venv/bin/python3 src/experiments.py \
@@ -64,7 +66,7 @@ withgrads: \
 
 # generate all possible targets
 ALGOS=ppo shac shacrm shacwm
-ENVS=transport dispersion sampling discovery
+ENVS=transport dispersion sampling discovery breakout breakout_ram
 AGENTS=1 3 5
 MODELS=mlp transformer
 SEEDS=42 43 44
@@ -113,3 +115,23 @@ clean: \
 	clean-discovery-mlp \
 	clean-discovery-transformer
 
+ALGOS=shacwm
+SEEDS=42
+breakout-transformer: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/transformer/$s/done))
+breakout-mlp: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/mlp/$s/done))
+breakout_ram-transformer: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout_ram/1/transformer/$s/done))
+breakout_ram-mlp: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout_ram/1/mlp/$s/done))
+
+ALGOS=ppo
+SEEDS=42
+breakout-transformer-ppo: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/transformer/$s/done))
+breakout-mlp-ppo: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/mlp/$s/done))
+breakout_ram-transformer-ppo: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout_ram/1/transformer/$s/done))
+breakout_ram-mlp-ppo: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout_ram/1/mlp/$s/done))
+
+ALGOS=shacrm
+SEEDS=42
+breakout-transformer-rm: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/transformer/$s/done))
+breakout-mlp-rm: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/mlp/$s/done))
+breakout_ram-transformer-rm: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout_ram/1/transformer/$s/done))
+breakout_ram-mlp-rm: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout_ram/1/mlp/$s/done))

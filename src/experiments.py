@@ -6,6 +6,8 @@ ENVNAMES = [
     "transport" ,
     "sampling"  ,
     "discovery" ,
+    "breakout"  ,
+    "breakout_ram"
 ]
 
 NNS = [

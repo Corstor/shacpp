@@ -83,5 +83,32 @@ def get_environment(name:str, envs:int, agents:int, device:str, grad_enabled:boo
                 dict_spaces        = False        ,
                 seed               = seed         ,
             )
+        
+        case "breakout":
+            return vmas.make_env(
+                scenario=environments.scenarios.Breakout(),
+                num_envs=envs,
+                device=device,
+                continuous_actions=True,
+                seed=seed,
+                grad_enabled=False,
+                feature_dim=512,
+                gym_env_name="ALE/Breakout-v5",
+                render_mode=None
+            )
+        
+        case "breakout_ram":
+            return vmas.make_env(
+                scenario=environments.scenarios.Breakout_Ram(),
+                num_envs=envs,
+                device=device,
+                continuous_actions=True,
+                seed=seed,
+                grad_enabled=False,
+                render_mode=None,
+                life_loss_penalty=0.0,
+                tracking_bonus=0.0,
+            )
+
         case _:
             raise ValueError(f"Unknown environment {name}.")

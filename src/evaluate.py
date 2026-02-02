@@ -15,8 +15,8 @@ def evaluate(
         world_tolerance  = 0.1
     ):
     policy_model.eval()
-    if reward_model: reward_model.eval()
-    if world_model :  world_model.eval()
+    if reward_model is not None: reward_model.eval()
+    if world_model  is not None: world_model.eval()
 
     eval_episode = unroll(
         observations = None, 
@@ -53,8 +53,8 @@ def evaluate(
         ).view(world_model.steps, rewards.size(1), rewards.size(2))
 
     policy_model.train()
-    if reward_model: reward_model.train()
-    if world_model :  world_model.train()
+    if reward_model is not None: reward_model.train()
+    if world_model  is not None: world_model.train()
     
     logger.info(json.dumps({
         "episode"              : episode,

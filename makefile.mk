@@ -22,7 +22,7 @@ data/$1/$2/$3/transformer/$4/done: venv/bin/python3
 		modelcfg --model policy --nn transformer \
 		modelcfg --model value  --nn transformer \
 		modelcfg --model reward --nn transformer \
-		run --log-grads $(LOGGRAD) --alg-name $1 --env-name $2 --agents $3 --seed $4 --compile $(COMPILE) --episodes $(EPISODES)
+		run --log-grads $(LOGGRAD) --alg-name $1 --env-name $2 --agents $3 --seed $4 --compile $(COMPILE) --episodes $(EPISODES) --train-envs $(TRAIN_ENVS) --eval-envs $(EVAL_ENVS)
 
 clean-$1-$2-$3-mlp-$4:
 	rm -rf data/$1/$2/$3/mlp/$4

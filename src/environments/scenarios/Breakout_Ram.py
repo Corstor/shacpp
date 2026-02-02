@@ -122,6 +122,7 @@ class Scenario(BaseScenario):
                 - life_loss_penalty: Negative reward for losing a life (default 0.0)
                 - frame_skip: Number of frames to skip per action (default 4)
                 - async_vectorize: Use async environments (default: num_envs >= 16)
+                - action_temperature: Temperature for action discretization (default 0.5, range = [0, 1], higher = more random)
         """
         self.num_envs = num_envs
         self.device = device
@@ -131,11 +132,13 @@ class Scenario(BaseScenario):
         self.life_loss_penalty = kwargs.get("life_loss_penalty", 0.0)
         self.frame_skip = kwargs.get("frame_skip", 4)
         self.tracking_bonus = kwargs.get("tracking_bonus", 0.0)  # Dense reward for paddle tracking ball
+        self.action_temperature = kwargs.get("action_temperature", 0.5)  # Softmax temperature for action discretization
         
         if self.life_loss_penalty > 0:
             print(f"✓ Life loss penalty enabled: -{self.life_loss_penalty} reward per life lost")
         if self.tracking_bonus > 0:
             print(f"✓ Tracking bonus enabled: +{self.tracking_bonus} max reward for paddle near ball")
+        print(f"✓ Action temperature: {self.action_temperature} (lower = more deterministic)")
         
         # Register Atari environments
         gym.register_envs(ale_py)
@@ -261,18 +264,33 @@ class Scenario(BaseScenario):
         """
         Convert continuous actions to discrete Breakout actions and step.
         
-        Discretization:
-            - action < -0.33: LEFT (action 3)
-            - action > 0.33: RIGHT (action 2)
-            - otherwise: NOOP (action 0)
+        Uses softmax-based stochastic discretization:
+            - Continuous action [-1, 1] is mapped to logits for [NOOP, RIGHT, LEFT]
+            - Temperature controls exploration (lower = more deterministic)
+            - This provides smoother gradients for learning and balanced exploration
         """
-        vmas_actions = agent.action.u
-        self._actions_buffer[:] = vmas_actions[:, 0].cpu().numpy()
-
-        # Discretize actions
-        np.copyto(self._gym_actions_buffer, 0)  # NOOP
-        self._gym_actions_buffer[self._actions_buffer < -0.33] = 3  # LEFT
-        self._gym_actions_buffer[self._actions_buffer > 0.33] = 2   # RIGHT
+        action_values = agent.action.u[:, 0].cpu().numpy()
+        
+        # Softmax-based stochastic discretization (vectorized)
+        # Create logits: NOOP peaks at 0, RIGHT peaks at +1, LEFT peaks at -1
+        logits = np.empty((self.num_envs, 3), dtype=np.float32)
+        logits[:, 0] = -np.abs(action_values) * 2  # NOOP
+        logits[:, 1] = action_values * 2           # RIGHT
+        logits[:, 2] = -action_values * 2          # LEFT
+        
+        # Softmax with temperature (numerically stable)
+        logits *= (1.0 / self.action_temperature)
+        logits -= logits.max(axis=1, keepdims=True)
+        np.exp(logits, out=logits)
+        logits /= logits.sum(axis=1, keepdims=True)
+        
+        # Vectorized categorical sampling using cumsum + searchsorted
+        cumprobs = np.cumsum(logits, axis=1)
+        rand = np.random.random(self.num_envs).astype(np.float32)
+        sampled_indices = np.sum(cumprobs < rand[:, None], axis=1)
+        
+        # Map indices [0,1,2] -> Atari actions [NOOP=0, RIGHT=2, LEFT=3]
+        self._gym_actions_buffer[:] = np.take(np.array([0, 2, 3], dtype=np.int32), sampled_indices)
 
         # Step environments
         obs, rewards, terminateds, truncateds, infos = self.gym_env.step(self._gym_actions_buffer)

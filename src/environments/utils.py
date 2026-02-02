@@ -1,7 +1,7 @@
 import environments
 import vmas
 
-def get_environment(name:str, envs:int, agents:int, device:str, grad_enabled:bool, seed:int)->vmas.simulator.environment.Environment:
+def get_environment(name:str, envs:int, agents:int, device:str, grad_enabled:bool, seed:int, is_eval:bool=False)->vmas.simulator.environment.Environment:
     
     match name:
         case "dispersion" :
@@ -108,6 +108,7 @@ def get_environment(name:str, envs:int, agents:int, device:str, grad_enabled:boo
                 render_mode=None,
                 life_loss_penalty=0.0,
                 tracking_bonus=0.0,
+                action_temperature=0.1 if is_eval else 0.5,
             )
 
         case _:

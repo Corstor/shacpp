@@ -29,7 +29,8 @@ def shacwm(config):
         agents       = config.agents    ,
         device       = config.device    ,
         grad_enabled = False            ,
-        seed         = config.seed
+        seed         = config.seed      ,
+        is_eval      = True
     )
 
     config.observation_size = train_world.observation_space[0].shape[0]

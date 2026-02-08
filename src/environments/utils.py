@@ -106,9 +106,10 @@ def get_environment(name:str, envs:int, agents:int, device:str, grad_enabled:boo
                 seed=seed,
                 grad_enabled=False,
                 render_mode=None,
-                life_loss_penalty=0.0,
+                life_loss_penalty=0,
                 tracking_bonus=0.0,
-                action_temperature=0.1 if is_eval else 0.5,
+                direction_bonus=0.0,  # Reward for moving TOWARD ball position
+                action_cycles=360,  # 360 cycles of [NOOP, RIGHT, LEFT] across [-1, 1]
             )
 
         case _:

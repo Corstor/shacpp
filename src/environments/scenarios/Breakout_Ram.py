@@ -122,7 +122,7 @@ class Scenario(BaseScenario):
                 - life_loss_penalty: Negative reward for losing a life (default 0.0)
                 - frame_skip: Number of frames to skip per action (default 4)
                 - async_vectorize: Use async environments (default: num_envs >= 16)
-                - action_temperature: Temperature for action discretization (default 0.5, range = [0, 1], higher = more random)
+                - action_cycles: Number of cyclic action bands (default 15)
         """
         self.num_envs = num_envs
         self.device = device
@@ -132,13 +132,16 @@ class Scenario(BaseScenario):
         self.life_loss_penalty = kwargs.get("life_loss_penalty", 0.0)
         self.frame_skip = kwargs.get("frame_skip", 4)
         self.tracking_bonus = kwargs.get("tracking_bonus", 0.0)  # Dense reward for paddle tracking ball
-        self.action_temperature = kwargs.get("action_temperature", 0.5)  # Softmax temperature for action discretization
+        self.direction_bonus = kwargs.get("direction_bonus", 0.0)  # Dense reward for moving in same direction as ball
+        self.action_cycles = kwargs.get("action_cycles", 15)  # Number of action cycles for cyclic discretization
         
         if self.life_loss_penalty > 0:
             print(f"✓ Life loss penalty enabled: -{self.life_loss_penalty} reward per life lost")
         if self.tracking_bonus > 0:
             print(f"✓ Tracking bonus enabled: +{self.tracking_bonus} max reward for paddle near ball")
-        print(f"✓ Action temperature: {self.action_temperature} (lower = more deterministic)")
+        if self.direction_bonus > 0:
+            print(f"✓ Direction bonus enabled: +{self.direction_bonus} reward for moving toward ball")
+        print(f"✓ Action discretization: cyclic ({self.action_cycles} cycles)")
         
         # Register Atari environments
         gym.register_envs(ale_py)
@@ -196,6 +199,9 @@ class Scenario(BaseScenario):
         self._gym_actions_buffer = np.zeros(num_envs, dtype=np.int32)
         self._lives_lost_buffer = np.zeros(num_envs, dtype=np.float32)
         self._tracking_distance_buffer = np.zeros(num_envs, dtype=np.float32)  # For tracking bonus
+        self._ball_position_diff = np.zeros(num_envs, dtype=np.float32)  # For interception bonus
+        self._direction_reward_buffer = np.zeros(num_envs, dtype=np.float32)  # For direction bonus
+        self._paddle_direction_buffer = np.zeros(num_envs, dtype=np.float32)  # For direction bonus
 
         # Create VMAS world (placeholder for interface compliance)
         world = World(
@@ -264,30 +270,20 @@ class Scenario(BaseScenario):
         """
         Convert continuous actions to discrete Breakout actions and step.
         
-        Uses softmax-based stochastic discretization:
-            - Continuous action [-1, 1] is mapped to logits for [NOOP, RIGHT, LEFT]
-            - Temperature controls exploration (lower = more deterministic)
-            - This provides smoother gradients for learning and balanced exploration
+        Uses cyclic deterministic discretization:
+            - Action space is divided into repeating bands: [NOOP, RIGHT, LEFT, NOOP, ...]
+            - Same value always produces same action → correct credit assignment
+            - Small policy changes can still change action → natural exploration
+            - Prevents collapse since all regions contain all actions
         """
         action_values = agent.action.u[:, 0].cpu().numpy()
         
-        # Softmax-based stochastic discretization (vectorized)
-        # Create logits: NOOP peaks at 0, RIGHT peaks at +1, LEFT peaks at -1
-        logits = np.empty((self.num_envs, 3), dtype=np.float32)
-        logits[:, 0] = -np.abs(action_values) * 2  # NOOP
-        logits[:, 1] = action_values * 2           # RIGHT
-        logits[:, 2] = -action_values * 2          # LEFT
-        
-        # Softmax with temperature (numerically stable)
-        logits *= (1.0 / self.action_temperature)
-        logits -= logits.max(axis=1, keepdims=True)
-        np.exp(logits, out=logits)
-        logits /= logits.sum(axis=1, keepdims=True)
-        
-        # Vectorized categorical sampling using cumsum + searchsorted
-        cumprobs = np.cumsum(logits, axis=1)
-        rand = np.random.random(self.num_envs).astype(np.float32)
-        sampled_indices = np.sum(cumprobs < rand[:, None], axis=1)
+        # Cyclic deterministic discretization
+        # Map [-1, 1] -> [0, 1] -> [0, cycles*3) -> action index via modulo
+        # This creates repeating bands: |NOOP|RIGHT|LEFT|NOOP|RIGHT|LEFT|...
+        normalized = (action_values + 1.0) * 0.5  # [-1, 1] -> [0, 1]
+        scaled = normalized * self.action_cycles * 3  # [0, cycles*3]
+        sampled_indices = np.floor(scaled).astype(np.int32) % 3
         
         # Map indices [0,1,2] -> Atari actions [NOOP=0, RIGHT=2, LEFT=3]
         self._gym_actions_buffer[:] = np.take(np.array([0, 2, 3], dtype=np.int32), sampled_indices)
@@ -307,6 +303,25 @@ class Scenario(BaseScenario):
             np.clip(self._tracking_distance_buffer, 0.0, 1.0, out=self._tracking_distance_buffer)
             # tracking_reward = bonus * (1 - normalized_distance)
             rewards = rewards + self.tracking_bonus * (1.0 - self._tracking_distance_buffer)
+
+        # Apply interception bonus: reward paddle for moving TOWARD the ball position
+        # This is better than "same direction as ball" because it tells policy to INTERCEPT
+        if self.direction_bonus > 0:
+            # Compute ball position relative to paddle: positive = ball is to the RIGHT
+            # ball_x - paddle_x: >0 means ball is right of paddle, <0 means ball is left
+            np.subtract(obs[:, 99].astype(np.float32), obs[:, 72].astype(np.float32), out=self._ball_position_diff)
+            
+            # Get paddle action direction: sampled_indices 0=NOOP, 1=RIGHT, 2=LEFT
+            # Map to: NOOP->0, RIGHT->+1, LEFT->-1 using lookup table (no allocation)
+            np.take(np.array([0.0, 1.0, -1.0], dtype=np.float32), sampled_indices, out=self._paddle_direction_buffer)
+            
+            # Reward when paddle moves TOWARD the ball
+            # If ball is to the right (positive) and paddle goes right (+1) -> reward
+            # If ball is to the left (negative) and paddle goes left (-1) -> reward (neg * neg = pos)
+            np.sign(self._ball_position_diff, out=self._direction_reward_buffer)
+            np.multiply(self._direction_reward_buffer, self._paddle_direction_buffer, out=self._direction_reward_buffer)
+            # +1 for moving toward ball, -1 for moving away, 0 for NOOP or ball directly above
+            rewards = rewards + self.direction_bonus * self._direction_reward_buffer
 
         # Apply life loss penalty
         if self.life_loss_penalty > 0 and hasattr(self, '_prev_lives'):

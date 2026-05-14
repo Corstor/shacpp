@@ -9,7 +9,9 @@ import os
 
 def ppo(config):
 
-    os.makedirs(config.dir, exist_ok=False)
+    # Allow existing directory when resuming from checkpoint
+    exist_ok = config.restore_path is not None
+    os.makedirs(config.dir, exist_ok=exist_ok)
     torch.set_float32_matmul_precision("high")
     utils.seed_everything(config.seed)
     torch.use_deterministic_algorithms(config.is_deterministic)

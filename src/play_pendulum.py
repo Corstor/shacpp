@@ -1,11 +1,11 @@
 """
-Play Breakout RAM with a trained policy model.
+Play Pendulum with a trained policy model.
 
 Usage:
-    python play_breakout_ram.py --policy-path <path_to_best.pkl>
+    python play_pendulum.py --policy-path <path_to_best.pkl>
 
 Example:
-    python play_breakout_ram.py --policy-path data/shacwm/breakout_ram/1/transformer/42/best.pkl
+    python play_pendulum.py --policy-path data/shacwm/pendulum/1/transformer/42/best.pkl
 """
 
 import click
@@ -24,9 +24,9 @@ import environments
               help="Path to the policy checkpoint file (best.pkl or models.pkl)")
 @click.option("--device", "device", type=str, default="cpu",
               help="Device to run on (cpu recommended for visualization)")
-@click.option("--episodes", "episodes", type=int, default=2,
+@click.option("--episodes", "episodes", type=int, default=5,
               help="Number of episodes to play")
-@click.option("--max-steps", "max_steps", type=int, default=64,
+@click.option("--max-steps", "max_steps", type=int, default=200,
               help="Maximum steps per episode")
 @click.option("--delay", "delay", type=float, default=0.02,
               help="Delay between frames in seconds (for visualization speed)")
@@ -41,10 +41,10 @@ def play(
     deterministic,
 ):
     """
-    Play Breakout RAM with a trained policy model.
+    Play Pendulum with a trained policy model.
     """
     print("=" * 60)
-    print("BREAKOUT RAM PLAYER - Trained Model Visualization")
+    print("PENDULUM PLAYER - Trained Model Visualization")
     print("=" * 60)
     
     # Try to load config from same directory
@@ -52,8 +52,8 @@ def play(
     config_path = os.path.join(checkpoint_dir, "locals.json")
     
     # Default parameters
-    observation_size = 128  # RAM size
-    action_size = 2  # 2 continuous actions: LEFT, RIGHT (argmax selected)
+    observation_size = 3  # [cos(theta), sin(theta), theta_dot]
+    action_size = 2  # continuous torque
     hidden_size = 64
     feedforward_size = 128
     layers = 1
@@ -134,21 +134,17 @@ def play(
     print(f"✓ Policy loaded from {policy_path}")
     
     # Create environment with rendering
-    print(f"\n🎮 Creating Breakout RAM environment with rendering...")
+    print(f"\n🎮 Creating Pendulum environment with rendering...")
     
     import vmas
     env = vmas.make_env(
-        scenario=environments.scenarios.Breakout_Ram(),
+        scenario=environments.scenarios.Pendulum(),
         num_envs=1,
         device=device,
         continuous_actions=True,
-        n_agents=1,
-        action_size=2,  # 2 continuous actions: LEFT, RIGHT
-        seed=43,
+        seed=42,
         grad_enabled=False,
         render_mode="human",
-        life_loss_penalty=0,  # No penalty for visualization
-        tracking_bonus=0.5,     # No bonus for visualization
     )
     
     print("✓ Environment created")
@@ -162,7 +158,7 @@ def play(
         for episode in range(episodes):
             # Reset environment
             obs_list = env.reset()
-            observations = torch.stack(obs_list).transpose(0, 1).to(device)  # (1, 1, 128)
+            observations = torch.stack(obs_list).transpose(0, 1).to(device)  # (1, 1, 3)
             
             episode_reward = 0
             step = 0
@@ -179,12 +175,11 @@ def play(
                         result = policy_model.sample(observations)
                     actions = result["actions"]
                 
-                # Debug first few steps - show argmax-selected action
-                if step < 128:
-                    action_vals = actions[0, 0, :].cpu().numpy()  # (2,) shape
-                    action_idx = np.argmax(action_vals)
-                    discrete = ["LEFT", "RIGHT"][action_idx]
-                    print(f"  Step {step}: actions={action_vals} -> argmax={action_idx} ({discrete})")
+                # Debug first few steps - show continuous action
+                if step < 10:
+                    action_val = actions[0, 0, 0].item()
+                    torque = action_val * 2.0  # Scaled to [-2, 2]
+                    print(f"  Step {step}: action={action_val:.3f}, torque={torque:.3f}")
                 
                 # Step environment
                 actions_list = [actions[:, i, :] for i in range(actions.shape[1])]
@@ -204,11 +199,11 @@ def play(
                     time.sleep(delay)
                 
                 # Print progress
-                if step % 200 == 0:
-                    print(f"  Step {step}: Total Reward = {episode_reward:.1f}")
+                if step % 50 == 0:
+                    print(f"  Step {step}: Total Reward = {episode_reward:.2f}")
             
             total_rewards.append(episode_reward)
-            print(f"Episode {episode + 1} finished: Reward = {episode_reward:.1f}, Steps = {step}")
+            print(f"Episode {episode + 1} finished: Reward = {episode_reward:.2f}, Steps = {step}")
     
     except KeyboardInterrupt:
         print("\n\n⏹️  Interrupted by user")

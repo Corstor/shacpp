@@ -107,6 +107,11 @@ def shacwm(
         world_model .load_state_dict(checkpoint[ "world_state_dict"])
         reward_model.load_state_dict(checkpoint["reward_state_dict"])
         value_model .load_state_dict(checkpoint[ "value_state_dict"])
+        # Restore optimizer states for proper training continuation
+        policy_model_optimizer.load_state_dict(checkpoint["policy_optimizer_state_dict"])
+        world_model_optimizer .load_state_dict(checkpoint[ "world_optimizer_state_dict"])
+        reward_model_optimizer.load_state_dict(checkpoint["reward_optimizer_state_dict"])
+        value_model_optimizer .load_state_dict(checkpoint[ "value_optimizer_state_dict"])
 
     prev_observations : torch.Tensor = torch.empty(train_envs, agents, observation_size)
     prev_dones        : torch.Tensor = torch.empty(train_envs, agents, 1)

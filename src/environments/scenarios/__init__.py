@@ -5,3 +5,4 @@ from environments.scenarios.Flocking    import Flocking
 from environments.scenarios.Discovery   import Discovery
 from environments.scenarios.Breakout    import Scenario as Breakout
 from environments.scenarios.Breakout_Ram import Scenario as Breakout_Ram
+from environments.scenarios.Pendulum import Scenario as Pendulum

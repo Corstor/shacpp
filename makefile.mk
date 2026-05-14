@@ -3,6 +3,8 @@ COMPILE=True
 LOGGRAD=False
 TRAIN_ENVS=512
 EVAL_ENVS=512
+TRAIN_STEPS=32
+RESTORE_PATH=
 
 venv/bin/python3:
 	python3 -m venv venv
@@ -15,14 +17,14 @@ data/$1/$2/$3/mlp/$4/done: venv/bin/python3
 		modelcfg --model policy --nn mlp --hidden-size $(shell echo $$((32 * $(3)))) \
 		modelcfg --model value  --nn mlp --hidden-size $(shell echo $$((32 * $(3)))) \
 		modelcfg --model reward --nn mlp --hidden-size $(shell echo $$((32 * $(3)))) \
-		run --log-grads $(LOGGRAD) --alg-name $1 --env-name $2 --agents $3 --seed $4 --compile $(COMPILE) --episodes $(EPISODES) --train-envs $(TRAIN_ENVS) --eval-envs $(EVAL_ENVS)
+		run --log-grads $(LOGGRAD) --alg-name $1 --env-name $2 --agents $3 --seed $4 --compile $(COMPILE) --episodes $(EPISODES) --train-steps $(TRAIN_STEPS) --train-envs $(TRAIN_ENVS) --eval-envs $(EVAL_ENVS) $(if $(RESTORE_PATH),--restore-path $(RESTORE_PATH))
 
 data/$1/$2/$3/transformer/$4/done: venv/bin/python3
 	CUBLAS_WORKSPACE_CONFIG=":4096:8" venv/bin/python3 src/experiments.py \
 		modelcfg --model policy --nn transformer \
 		modelcfg --model value  --nn transformer \
 		modelcfg --model reward --nn transformer \
-		run --log-grads $(LOGGRAD) --alg-name $1 --env-name $2 --agents $3 --seed $4 --compile $(COMPILE) --episodes $(EPISODES) --train-envs $(TRAIN_ENVS) --eval-envs $(EVAL_ENVS)
+		run --log-grads $(LOGGRAD) --alg-name $1 --env-name $2 --agents $3 --seed $4 --compile $(COMPILE) --episodes $(EPISODES) --train-steps $(TRAIN_STEPS) --train-envs $(TRAIN_ENVS) --eval-envs $(EVAL_ENVS) $(if $(RESTORE_PATH),--restore-path $(RESTORE_PATH))
 
 clean-$1-$2-$3-mlp-$4:
 	rm -rf data/$1/$2/$3/mlp/$4
@@ -66,7 +68,7 @@ withgrads: \
 
 # generate all possible targets
 ALGOS=ppo shac shacrm shacwm
-ENVS=transport dispersion sampling discovery breakout breakout_ram
+ENVS=transport dispersion sampling discovery breakout breakout_ram pendulum
 AGENTS=1 3 5
 MODELS=mlp transformer
 SEEDS=42 43 44
@@ -116,9 +118,11 @@ clean: \
 	clean-discovery-transformer
 
 ALGOS=shacwm
-SEEDS=42
+SEEDS=44
 breakout-transformer: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/transformer/$s/done))
+pendulum-transformer: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/pendulum/1/transformer/$s/done))
 breakout-mlp: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/mlp/$s/done))
+pendulum-mlp: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/pendulum/1/mlp/$s/done))
 breakout_ram-transformer: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout_ram/1/transformer/$s/done))
 breakout_ram-mlp: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout_ram/1/mlp/$s/done))
 

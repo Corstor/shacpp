@@ -104,9 +104,15 @@ class Scenario(BaseScenario):
     This may be easier for a world model to learn than pixel-based features
     since the state is more "physics-like" and lower dimensional.
     
+    Action Mode:
+        Uses 2 continuous action outputs with argmax selection:
+        - action[0]: LEFT (Atari action 3)
+        - action[1]: RIGHT (Atari action 2)
+        The discrete action is selected as argmax(action_values).
+    
     Attributes:
         observation_size: 128 (RAM bytes)
-        action_size: 1 (continuous action discretized to LEFT/RIGHT/NOOP)
+        action_size: 2 (two continuous logits, argmax selected)
         agents: 1 (single paddle)
     """
     
@@ -122,7 +128,8 @@ class Scenario(BaseScenario):
                 - life_loss_penalty: Negative reward for losing a life (default 0.0)
                 - frame_skip: Number of frames to skip per action (default 4)
                 - async_vectorize: Use async environments (default: num_envs >= 16)
-                - action_cycles: Number of cyclic action bands (default 15)
+                - tracking_bonus: Dense reward for paddle near ball (default 0.0)
+                - direction_bonus: Dense reward for moving toward ball (default 0.0)
         """
         self.num_envs = num_envs
         self.device = device
@@ -132,8 +139,7 @@ class Scenario(BaseScenario):
         self.life_loss_penalty = kwargs.get("life_loss_penalty", 0.0)
         self.frame_skip = kwargs.get("frame_skip", 4)
         self.tracking_bonus = kwargs.get("tracking_bonus", 0.0)  # Dense reward for paddle tracking ball
-        self.direction_bonus = kwargs.get("direction_bonus", 0.0)  # Dense reward for moving in same direction as ball
-        self.action_cycles = kwargs.get("action_cycles", 15)  # Number of action cycles for cyclic discretization
+        self.direction_bonus = kwargs.get("direction_bonus", 0.0)  # Dense reward for moving toward ball
         
         if self.life_loss_penalty > 0:
             print(f"✓ Life loss penalty enabled: -{self.life_loss_penalty} reward per life lost")
@@ -141,7 +147,9 @@ class Scenario(BaseScenario):
             print(f"✓ Tracking bonus enabled: +{self.tracking_bonus} max reward for paddle near ball")
         if self.direction_bonus > 0:
             print(f"✓ Direction bonus enabled: +{self.direction_bonus} reward for moving toward ball")
-        print(f"✓ Action discretization: cyclic ({self.action_cycles} cycles)")
+        print(f"✓ Action mode: 2 continuous actions (argmax selection)")
+        print(f"✓ Action mapping: action[0]=LEFT, action[1]=RIGHT")
+        print(f"  - Policy network should output 2 continuous dimensions per agent")
         
         # Register Atari environments
         gym.register_envs(ale_py)
@@ -195,7 +203,6 @@ class Scenario(BaseScenario):
         )
         
         # Pre-allocated buffers
-        self._actions_buffer = np.zeros(num_envs, dtype=np.float32)
         self._gym_actions_buffer = np.zeros(num_envs, dtype=np.int32)
         self._lives_lost_buffer = np.zeros(num_envs, dtype=np.float32)
         self._tracking_distance_buffer = np.zeros(num_envs, dtype=np.float32)  # For tracking bonus
@@ -203,7 +210,7 @@ class Scenario(BaseScenario):
         self._direction_reward_buffer = np.zeros(num_envs, dtype=np.float32)  # For direction bonus
         self._paddle_direction_buffer = np.zeros(num_envs, dtype=np.float32)  # For direction bonus
 
-        # Create VMAS world (placeholder for interface compliance)
+        # Create VMAS world (minimal placeholder - physics disabled)
         world = World(
             batch_dim=num_envs,
             device=device,
@@ -211,13 +218,22 @@ class Scenario(BaseScenario):
             y_semidim=1,
             collision_force=0,
             substeps=1,
+            drag=0,
+            linear_friction=0,
+            angular_friction=0,
         )
 
+        # Agent is non-movable/non-rotatable to skip physics in World.step()
+        # Extract action_size from kwargs (passed via vmas.make_env)
+        action_size_param = kwargs.get("action_size", 2)  # Default to 2 if not specified
         agent = Agent(
             name="paddle",
             shape=Sphere(radius=0.05),
             color=Color.BLUE,
-            render_action=True
+            movable=False,      # Skip force/velocity integration
+            rotatable=False,    # Skip torque/angular integration
+            collide=False,      # Skip collision detection
+            action_size=action_size_param,  # CRITICAL: tells VMAS we have N continuous actions
         )
         world.add_agent(agent)
         
@@ -268,25 +284,25 @@ class Scenario(BaseScenario):
     
     def process_action(self, agent: Agent):
         """
-        Convert continuous actions to discrete Breakout actions and step.
+        Convert 2 continuous actions to discrete Breakout actions via argmax selection.
         
-        Uses cyclic deterministic discretization:
-            - Action space is divided into repeating bands: [NOOP, RIGHT, LEFT, NOOP, ...]
-            - Same value always produces same action → correct credit assignment
-            - Small policy changes can still change action → natural exploration
-            - Prevents collapse since all regions contain all actions
+        Action mapping:
+            - agent.action.u[:, 0]: LEFT action (Atari action 3)
+            - agent.action.u[:, 1]: RIGHT action (Atari action 2)
+        
+        Selection: argmax(action_values) determines which discrete action is executed.
+        This allows the policy to output multiple action logits and let the argmax select.
+        Optimized: argmax is computed on GPU, only final actions converted to numpy.
         """
-        action_values = agent.action.u[:, 0].cpu().numpy()
+        # agent.action.u is (num_envs, 2), two continuous actions in [-1, 1]
+        # Keep on GPU for argmax operation
+        indices = torch.argmax(agent.action.u, dim=1)
         
-        # Cyclic deterministic discretization
-        # Map [-1, 1] -> [0, 1] -> [0, cycles*3) -> action index via modulo
-        # This creates repeating bands: |NOOP|RIGHT|LEFT|NOOP|RIGHT|LEFT|...
-        normalized = (action_values + 1.0) * 0.5  # [-1, 1] -> [0, 1]
-        scaled = normalized * self.action_cycles * 3  # [0, cycles*3]
-        sampled_indices = np.floor(scaled).astype(np.int32) % 3
+        # Convert indices to numpy only for gymnasium compatibility
+        indices_np = indices.cpu().numpy().astype(np.int32)
         
-        # Map indices [0,1,2] -> Atari actions [NOOP=0, RIGHT=2, LEFT=3]
-        self._gym_actions_buffer[:] = np.take(np.array([0, 2, 3], dtype=np.int32), sampled_indices)
+        # Map indices [0, 1, 2] -> Atari actions [LEFT=3, RIGHT=2]
+        self._gym_actions_buffer[:] = np.take(np.array([3, 2], dtype=np.int32), indices_np)
 
         # Step environments
         obs, rewards, terminateds, truncateds, infos = self.gym_env.step(self._gym_actions_buffer)
@@ -300,7 +316,7 @@ class Scenario(BaseScenario):
             np.subtract(obs[:, 72], obs[:, 99], out=self._tracking_distance_buffer)
             np.abs(self._tracking_distance_buffer, out=self._tracking_distance_buffer)
             np.divide(self._tracking_distance_buffer, 80.0, out=self._tracking_distance_buffer)
-            np.clip(self._tracking_distance_buffer, 0.0, 1.0, out=self._tracking_distance_buffer)
+            np.clip(self._tracking_distance_buffer, 0.0, 2.0, out=self._tracking_distance_buffer)
             # tracking_reward = bonus * (1 - normalized_distance)
             rewards = rewards + self.tracking_bonus * (1.0 - self._tracking_distance_buffer)
 
@@ -311,9 +327,13 @@ class Scenario(BaseScenario):
             # ball_x - paddle_x: >0 means ball is right of paddle, <0 means ball is left
             np.subtract(obs[:, 99].astype(np.float32), obs[:, 72].astype(np.float32), out=self._ball_position_diff)
             
-            # Get paddle action direction: sampled_indices 0=NOOP, 1=RIGHT, 2=LEFT
-            # Map to: NOOP->0, RIGHT->+1, LEFT->-1 using lookup table (no allocation)
-            np.take(np.array([0.0, 1.0, -1.0], dtype=np.float32), sampled_indices, out=self._paddle_direction_buffer)
+            # Get paddle action direction from gym_actions_buffer
+            # Atari actions: 0=NOOP, 2=RIGHT, 3=LEFT
+            # Map to: NOOP->0, RIGHT->+1, LEFT->-1
+            # Use direct comparison (vectorized, no allocation)
+            self._paddle_direction_buffer[:] = 0.0
+            self._paddle_direction_buffer[self._gym_actions_buffer == 2] = 1.0   # RIGHT
+            self._paddle_direction_buffer[self._gym_actions_buffer == 3] = -1.0  # LEFT
             
             # Reward when paddle moves TOWARD the ball
             # If ball is to the right (positive) and paddle goes right (+1) -> reward

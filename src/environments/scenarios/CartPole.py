@@ -1,16 +1,15 @@
 """
-Pendulum Scenario - A VMAS-compatible wrapper for the Pendulum environment.
+CartPole Scenario - A VMAS-compatible wrapper for the CartPole environment.
 
-This module provides a scenario that integrates the Gymnasium Pendulum
-environment with the VMAS framework. The Pendulum task involves swinging
-a pendulum up and balancing it at the top using continuous torque control.
+This module provides a scenario that integrates Gymnasium's CartPole environment
+with the VMAS framework using continuous action outputs with argmax discretization.
 
 Key Features:
-    - Uses Pendulum-v1 from Gymnasium
-    - Continuous action space: agent actions in [-1, 1] mapped to torque [-2, 2]
-    - 3-dimensional observations: [cos(theta), sin(theta), theta_dot]
+    - Uses CartPole-v1 from Gymnasium
+    - Continuous action space: 2 continuous logits, argmax selected to [0, 1]
+    - 4-dimensional observations: [position, velocity, angle, angular_velocity]
     - Single agent scenario
-    - Episodes: 200 steps (truncated)
+    - Episodes: 500 steps (truncated)
 
 """
 
@@ -25,21 +24,26 @@ from vmas.simulator.utils import Color
 
 class Scenario(BaseScenario):
     """
-    VMAS Scenario wrapper for the Pendulum environment.
+    VMAS Scenario wrapper for the CartPole environment.
     
-    The Pendulum environment simulates a pendulum attached to a fixed point
-    that can be controlled by applying torque. The goal is to swing the pendulum
-    up to the upright position (theta = 0) and balance it there.
+    The CartPole environment simulates a pole balanced on a moving cart.
+    The goal is to keep the pole upright by applying left/right forces to the cart.
+    
+    Action Mode:
+        Uses 2 continuous action outputs with argmax selection:
+        - action[0]: PUSH_LEFT (Atari action 0)
+        - action[1]: PUSH_RIGHT (Atari action 1)
+        The discrete action is selected as argmax(action_values).
     
     Attributes:
-        observation_size: 3 ([cos(theta), sin(theta), theta_dot])
-        action_size: 1 (continuous action in [-1, 1], mapped to torque [-2, 2])
-        agents: 1 (the pendulum controller)
+        observation_size: 4 ([position, velocity, angle, angular_velocity])
+        action_size: 2 (two continuous logits, argmax selected)
+        agents: 1 (the cart pole controller)
     """
     
     def make_world(self, num_envs: int, device: torch.device, **kwargs) -> World:
         """
-        Create and initialize the VMAS world with vectorized Pendulum environments.
+        Create and initialize the VMAS world with vectorized CartPole environments.
         
         Args:
             num_envs: Number of parallel environments
@@ -50,7 +54,7 @@ class Scenario(BaseScenario):
         """
         self.num_envs = num_envs
         self.device = device
-        self.observation_dim = 3  # [cos(theta), sin(theta), theta_dot]
+        self.observation_dim = 4  # [position, velocity, angle, angular_velocity]
         
         # Handle render mode
         render_mode_raw = kwargs.get("render_mode", None)
@@ -62,9 +66,9 @@ class Scenario(BaseScenario):
             self.render_mode = render_mode_raw
 
         def make_env(render_mode=None):
-            """Create a single Pendulum environment."""
+            """Create a single CartPole environment."""
             return gym.make(
-                "Pendulum-v1",
+                "CartPole-v1",
                 render_mode=render_mode
             )
         
@@ -87,16 +91,17 @@ class Scenario(BaseScenario):
         self.current_rewards = torch.zeros(num_envs, device=device, dtype=torch.float32)
         self.dones = torch.zeros(num_envs, dtype=torch.bool, device=device)
         
-        # Observation cache: (num_envs, 3)
+        # Observation cache: (num_envs, 4)
+        # Observations from CartPole are already normalized reasonably
         self.obs_cache = torch.zeros(
             num_envs, self.observation_dim,
             device=device,
             dtype=torch.float32
         )
         
-        # Pre-allocated buffer for actions with shape (num_envs, 1)
-        # Pendulum expects 1D array per action, not scalar
-        self._actions_buffer = np.zeros((num_envs, 1), dtype=np.float32)
+        # Pre-allocated buffer for actions with shape (num_envs,)
+        # CartPole expects discrete actions [0, 1]
+        self._gym_actions_buffer = np.zeros(num_envs, dtype=np.int32)
 
         # Create VMAS world (minimal placeholder - physics disabled)
         world = World(
@@ -113,19 +118,19 @@ class Scenario(BaseScenario):
 
         # Agent is non-movable/non-rotatable to skip physics in World.step()
         # Extract action_size from kwargs (passed via vmas.make_env)
-        action_size_param = kwargs.get("action_size", 1)  # Default to 1 for Pendulum
+        action_size_param = kwargs.get("action_size", 1)  # Default to 1 (single continuous action)
         agent = Agent(
-            name="pendulum",
+            name="cartpole",
             shape=Sphere(radius=0.05),
-            color=Color.GREEN,
+            color=Color.RED,
             movable=False,      # Skip force/velocity integration
             rotatable=False,    # Skip torque/angular integration
             collide=False,      # Skip collision detection
-            #action_size=action_size_param,  # 1 continuous action (torque)
+            action_size=action_size_param,  # CRITICAL: tells VMAS we have N continuous actions
         )
         world.add_agent(agent)
         
-        print(f"✓ Pendulum initialized: {num_envs} envs, {self.observation_dim}-dim observations")
+        print(f"✓ CartPole initialized: {num_envs} envs, {self.observation_dim}-dim observations")
         
         return world
     
@@ -138,9 +143,10 @@ class Scenario(BaseScenario):
     
     def _update_obs_cache(self, obs_array):
         """
-        Update observation cache with Pendulum state.
+        Update observation cache with CartPole state.
         
-        Observations are already in [-1, 1] range for cos/sin, theta_dot in [-8, 8].
+        Observations are: [position, velocity, angle, angular_velocity]
+        Already in reasonable ranges, no normalization needed.
         """
         self.obs_cache.copy_(
             torch.from_numpy(obs_array.astype(np.float32)).to(self.device)
@@ -152,10 +158,10 @@ class Scenario(BaseScenario):
     
     def observation(self, agent: Agent):
         """
-        Return Pendulum observations.
+        Return CartPole observations.
         
         Returns:
-            Tensor of shape (num_envs, 3) with [cos(theta), sin(theta), theta_dot]
+            Tensor of shape (num_envs, 4) with state
         """
         return self.obs_cache
     
@@ -165,19 +171,28 @@ class Scenario(BaseScenario):
     
     def process_action(self, agent: Agent):
         """
-        Apply continuous torque actions to the Pendulum environments.
+        Convert 2 continuous actions to discrete CartPole actions via argmax selection.
         
-        Actions are continuous values in [-1, 1], scaled to torque [-2, 2].
+        Action mapping:
+            - agent.action.u[:, 0]: PUSH_LEFT (CartPole action 0)
+            - agent.action.u[:, 1]: PUSH_RIGHT (CartPole action 1)
+        
+        Selection: argmax(action_values) determines which discrete action is executed.
+        This allows the policy to output multiple action logits and let the argmax select.
+        Optimized: argmax is computed on GPU, only final actions converted to numpy.
         """
-        # agent.action.u is (num_envs, 1), continuous [-1, 1]
-        action_values = agent.action.u[:, 0].cpu().numpy()
+        # agent.action.u is (num_envs, 2), two continuous actions in [-1, 1]
+        # Keep on GPU for argmax operation
+        indices = torch.argmax(agent.action.u, dim=1)  # Shape: (num_envs,), values in [0, 1]
         
-        # Scale to [-2, 2] and store in pre-allocated buffer
-        # Shape (num_envs, 1) because Pendulum expects 1D array per action
-        self._actions_buffer[:, 0] = action_values * 2.0
+        # Convert indices to numpy only for gymnasium compatibility
+        indices_np = indices.cpu().numpy().astype(np.int32)
         
-        # Step environments with pre-allocated buffer
-        obs, rewards, terminateds, truncateds, _ = self.gym_env.step(self._actions_buffer)
+        # Indices are already 0 or 1, which are valid CartPole actions
+        self._gym_actions_buffer[:] = indices_np
+
+        # Step environments
+        obs, rewards, terminateds, truncateds, infos = self.gym_env.step(self._gym_actions_buffer)
 
         # Update caches
         self._update_obs_cache(obs)
@@ -191,14 +206,12 @@ class Scenario(BaseScenario):
         )
 
     def max_rewards(self):
-        """Maximum possible reward (perfect balance at upright position)."""
-        # Pendulum reward = -(theta^2 + 0.1*theta_dot^2 + 0.001*torque^2)
-        # Maximum reward is 0 (when theta=0, theta_dot=0, torque=0)
-        return torch.zeros((self.num_envs,), device=self.device)
+        """Maximum possible reward (500 steps)."""
+        return torch.full((self.num_envs,), 500.0, device=self.device)
     
     def diffreward(self, prevs, acts, nexts):
-        """Not implemented - Pendulum rewards are not differentiable in this wrapper."""
-        raise NotImplementedError("Pendulum has non-differentiable rewards in this wrapper")
+        """Not implemented - CartPole rewards are not differentiable."""
+        raise NotImplementedError("CartPole has non-differentiable rewards")
     
     def zero_grad(self):
         """Clear gradients (no-op for non-differentiable env)."""

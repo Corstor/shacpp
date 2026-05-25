@@ -8,7 +8,8 @@ ENVNAMES = [
     "discovery" ,
     "breakout"  ,
     "breakout_ram",
-    "pendulum"
+    "pendulum",
+    "cartpole"
 ]
 
 NNS = [

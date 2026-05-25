@@ -94,7 +94,20 @@ def get_environment(name:str, envs:int, agents:int, device:str, grad_enabled:boo
                 grad_enabled=grad_enabled,
                 render_mode=None,
                 n_agents=1,
-                action_size=1,  # 1 continuous action: torque
+                action_size=2,  # 1 continuous action: torque
+            )
+        
+        case "cartpole":
+            return vmas.make_env(
+                scenario=environments.scenarios.CartPole(),
+                num_envs=envs,
+                device=device,
+                continuous_actions=True,
+                seed=seed,
+                grad_enabled=grad_enabled,
+                render_mode=None,
+                n_agents=1,
+                action_size=2,
             )
         
         case "breakout":

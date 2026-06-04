@@ -119,7 +119,7 @@ clean: \
 	clean-discovery-transformer
 
 ALGOS=shacwm
-SEEDS=43
+SEEDS=42
 breakout-transformer: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/breakout/1/transformer/$s/done))
 pendulum-transformer: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/pendulum/1/transformer/$s/done))
 cartpole-transformer: $(foreach a,$(ALGOS),$(foreach s,$(SEEDS),data/$a/cartpole/1/transformer/$s/done))

@@ -134,7 +134,6 @@ def get_environment(name:str, envs:int, agents:int, device:str, grad_enabled:boo
                 render_mode=None,
                 n_agents=1,
                 action_size=2,  # 2 continuous actions: LEFT, RIGHT
-                life_loss_penalty=0,
                 tracking_bonus=0.5,
                 direction_bonus=0,
             )

@@ -119,7 +119,6 @@ def get_environment(name:str, envs:int, agents:int, device:str, grad_enabled:boo
                 seed=seed,
                 grad_enabled=False,
                 feature_dim=512,
-                gym_env_name="ALE/Breakout-v5",
                 render_mode=None
             )
         

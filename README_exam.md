@@ -1,5 +1,29 @@
 # SHAC++ integration with videogame simulators
 
+## SHAC e SHAC++
+
+### SHAC
+
+SHAC è un modello di Deep Reinforcement Learning che utilizza un metodo "gradient-based" per accelerare l'apprendimento e l'ottimizzazione di una policy.
+Con questo tipo di apprendimento si tende ad incontrare principalmente tre problemi:
+- Trovare minimi locali che "bloccano" l'ottimizzazione del gradiente;
+- l'"esplosione" del gradiente nel percorso inverso per traiettorie lunghe;
+- una superficie di ottimizzazione discontinua se si incappa in fallimenti della policy o terminazioni premature.
+
+SHAC riesce a risolvere il primo problema utlizzando una rete neurale per approssimare la value function, smussando così la superficie di ottimizzazione, mentre il secondo problema lo risolve dividendo le traiettorie in traiettorie più corte, mentre l'ultimo problema viene risolto proprio dalla combinazione di queste due tecniche.
+
+Purtroppo questo modello ha due limitazioni principali:
+- Le funzioni di Reward e Transictions devono essere differenziabili
+- Gradiente possibilmente instabile in ambienti Multi-Agent
+
+### SHAC++
+
+SHAC++ è un modello di Deep Reinforcement Learning che cerca di rimediare alle due limitazioni principali di SHAC utilizzando una rete neurale per approssimare la Reward function ed un'altra rete neurale per approssimare la Transiction Function. Per il Multi-Agent si considera la ricompensa di ogni agente per il training.
+
+Viene inoltre introdotta una cache per le traiettorie, divisa in K contenitori ognuno con delle traiettorie che hanno rewards simili tra di loro, e un cool-down tra l'addestramento delle reti neurali di value, reward e transiction, così da minimizzare il tempo necessario per cambiare tra le differenti procedure di addestramento.
+
+Per le reti neurali si è deciso di utilizzare un MLP oppure un transformer. Per entrambi si utilizza un solo layer per le funzioni di reward, value e policy, mentre il transformer utilizza 3 layer per la funzione di transizione (MLP sempre un solo layer).
+
 ## Problem
 
 The problem was to achieve a good result from the Deep Reinforcement Learning model called SHAC++ in the simulated environment of [Breakout](https://ale.farama.org/environments/breakout/).
